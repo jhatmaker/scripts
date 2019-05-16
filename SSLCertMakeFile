@@ -1,0 +1,202 @@
+# 
+# this makefile is used to generate the required files for SSL Certs
+
+OPENSSL:=/usr/bin/openssl
+SSL_KEYSIZE:=2048
+WDIR:=$(realpath $(CURDIR))
+FILE_CN:=$(shell basename $(realpath $(CURDIR)))
+CN:=$(subst wildcard,"*",$(FILE_CN))
+SHORTHOST:=$(strip $(word 1,$(subst ., ,$(CN))))
+ALT_NAME_1 := $(CN)
+ALT_NAME_1_FULL := DNS.1 = $(ALT_NAME_1)
+
+ifeq ($(strip $(SHORTHOST)),"*")
+
+ALT_NAME_2 := 
+ALT_NAME_2_FULL := 
+ALT_NAME_3_FULL := 
+else 
+ALT_NAME_2 :=  www.$(CN)
+ALT_NAME_2_FULL := DNS.2 = $(ALT_NAME_2)
+ALT_NAME_3 := $(SHORTHOST)
+ALT_NAME_3_FULL := DNS.3 = $(ALT_NAME_3)
+endif
+
+
+ALT_NAME_IP := $(strip $(word 1,$(shell dig $(FILE_CN) +search +noedns +short ) ))
+ifeq ($(strip $(ALT_NAME_IP)),)
+ALT_NAME_IP_FULL := 
+else
+ALT_NAME_IP_FULL:= IP.1 = $(ALT_NAME_IP)
+endif
+
+FILE_DATA_FILENAME:=$(FILE_CN).data
+FILE_KEY_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).key
+FILE_PTKEY_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).ptkey
+FILE_PUBKEY_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).pubkey
+FILE_PTPUBKEY_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).ptpubkey
+FILE_CERT_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).crt
+FILE_CSR_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).csr
+FILE_CA_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).ca.crt
+FILE_COMBINED_FILENAME:=$(FILE_CN).$(SSL_KEYSIZE).combined.crt
+FILE_CACHAIN_SHORTFILENAME:=$(FILE_CN).$(SSL_KEYSIZE).cachain
+FILE_CACHAIN_FILENAME_PEM:=$(FILE_CACHAIN_SHORTFILENAME).crt
+FILE_CACHAIN_FILENAME_P7B:=$(FILE_CACHAIN_SHORTFILENAME).p7b
+FILE_CACHAIN_FILENAME:=$(FILE_CACHAIN_FILENAME_PEM)
+FILE_OPENSSLCONF_FILENAME:=$(FILE_CN).openssl.cnf
+
+.SUFFIXES: .cnf .pem
+
+.PHONY: test all csr key
+
+usage: 
+	@echo make test
+	@echo make
+	@echo make config 	This makes the Openssl Config used to create the request
+	@echo make key
+	@echo make csr 
+	@echo make verify csr 
+	@echo make cachain_pb7_to_pem
+
+test: 
+	@echo WDIR: $(WDIR)
+	@echo FILE_CN: $(FILE_CN)
+	@echo CN: $(CN)
+	@echo SHORTHOST: $(SHORTHOST)
+	@echo ALT_NAME_1: $(ALT_NAME_1)
+	@echo ALT_NAME_1_FULL: $(ALT_NAME_1_FULL)
+	@echo ALT_NAME_2: $(ALT_NAME_2)
+	@echo ALT_NAME_2_FULL: $(ALT_NAME_2_FULL)
+	@echo ALT_NAME_3: $(ALT_NAME_3)
+	@echo ALT_NAME_3_FULL: $(ALT_NAME_3_FULL)
+	@echo ALT_NAME_IP: $(ALT_NAME_IP)
+	@echo ALT_NAME_IP_FULL: $(ALT_NAME_IP_FULL)
+
+all: 
+config: $(FILE_OPENSSLCONF_FILENAME)
+	@echo "checking openssl config"
+
+key: $(FILE_KEY_FILENAME)
+	@echo "checking key"
+
+csr: $(FILE_CSR_FILENAME) 
+	@echo "checking CSR"
+
+data: $(FILE_OPNESSLCONF_FILENAME)
+	# Recreate the data file
+	# Country Name: 
+	# State: 	
+	# Locality Name: 
+	# Organization Name: 
+	# Common Name: $(CN)
+	# Email Address: 
+	# challange password: 
+	# optional company name: 
+	# 2 empty lines
+	@echo "Re-creating the data file that will be used to create the CSR"
+	#@echo "US" > $(FILE_DATA_FILENAME)
+	#@echo "US" > $(FILE_DATA_FILENAME)
+
+
+$(FILE_OPENSSLCONF_FILENAME):
+	@echo "Creating the openssl config file for this site" 
+	@echo "" > $@
+	@echo "[ req ]" >> $@
+	@echo "prompt			= no" >> $@
+	@echo "default_bits		= $(SSL_KEYSIZE)" >> $@
+	@echo "distinguished_name	= server_distinguished_name" >> $@
+	@echo "req_extensions		= req_ext" >> $@
+	@echo "" >> $@
+	@echo "[ server_distinguished_name ]" >> $@
+	@echo "CN	= $(CN)" >> $@
+	@echo "C	= " >> $@
+	@echo "ST	= " >> $@
+	@echo "L	= " >> $@
+	@echo "O	= " >> $@
+	@echo "OU	= " >> $@
+	@echo "emailAddress	= " >> $@
+	@echo "" >> $@
+	@echo "[ req_ext ]" >> $@
+	@echo "subjectAltName	= @alt_names" >> $@
+	@echo "" >> $@
+	@echo "[ alt_names ]" >> $@
+	@echo "$(ALT_NAME_1_FULL)" >> $@
+	@echo "$(ALT_NAME_2_FULL)" >> $@
+	@echo "$(ALT_NAME_3_FULL)" >> $@
+	@echo "$(ALT_NAME_IP_FULL)" >> $@
+	@echo "OpenSSL Config file $(FILE_OPENSSLCONF_FILENAME) created." 
+
+verify_csr: $(FILE_CSR_FILENAME)
+	$(OPENSSL) req -text -in $(FILE_CSR_FILENAME) -noout -verify
+
+$(FILE_CSR_FILENAME): $(FILE_KEY_FILENAME) $(FILE_OPENSSLCONF_FILENAME)
+	$(OPENSSL) req -new -key $(FILE_KEY_FILENAME) -out $(FILE_CSR_FILENAME) -config $(FILE_OPENSSLCONF_FILENAME) 
+
+$(FILE_KEY_FILENAME): 
+	$(OPENSSL) genrsa -out $(FILE_KEY_FILENAME) $(SSL_KEYSIZE) -config $(FILE_OPENSSLCONF_FILENAME) 
+
+$(FILE_CERT_FILENAME): 
+	@echo "Missing the file $(FILE_CERT_FILENAME) please copy the downloaded PEM format cert file and name it exactly as shown."
+
+$(FILE_CACHAIN_FILENAME):
+	@$(OPENSSL) pkcs7 -inform DER -outform PEM -in $(FILE_CACHAIN_FILENAME_P7B) -print_certs > $(FILE_CACHAIN_FILENAME)
+
+$(FILE_CACHAIN_FILENAME_P7B):
+	@echo "Missing the file $(FILE_CACHAIN_FILENAME_P7B) please copy the downloaded DER format p7b file and name it exactly as shown."
+
+$(FILE_COMBINED_FILENAME): $(FILE_CERT_FILENAME) $(FILE_CACHAIN_FILENAME)
+	@cat $(FILE_CERT_FILENAME) > $(FILE_COMBINED_FILENAME)
+	@cat $(FILE_CACHAIN_FILENAME) >> $(FILE_COMBINED_FILENAME)
+
+$(FILE_PTKEY_FILENAME):
+	@echo "File $(FILE_PTKEY_FILENAME) created."
+
+$(FILE_PUBKEY_FILENAME):
+	@$(OPENSSL) rsa -in $(FILE_KEY_FILENAME) -pubout -out $(FILE_PUBKEY_FILENAME)
+	@echo "File $(FILE_PUBKEY_FILENAME) created."
+
+$(FILE_PTPUBKEY_FILENAME):
+	#@$(OPENSSL) rsa -in $(FILE_KEY_FILENAME) -pubout -out $(FILE_PUBKEY_FILENAME)
+	@echo "File $(FILE_PTPUBKEY_FILENAME) created."
+
+
+# Public Key
+# openssl rsa -in $(FILE_KEY_FILENAME) -pubout -out yourdomain_public.key
+#
+# Print out all the certs in a file 
+# openssl pkcs7 -inform DER -outform PEM -in certificate.p7b -print_certs > certificate_bundle.cer
+
+	
+
+cachain_pb7_to_pem: $(FILE_CACHAIN_FILENAME_P7B) $(FILE_COMBINED_FILENAME)
+	@echo "File created: $(FILE_CACHAIN_FILENAME)"
+
+
+crt: $(FILE_CERT_FILENAME)
+	@echo "File found: $(FILE_CERT_FILENAME)"
+
+combined: $(FILE_COMBINED_FILENAME)
+	@echo "File created: $(FILE_COMBINED_FILENAME)"
+
+
+
+
+
+
+ptkey: $(FILE_PTKEY_FILENAME)
+	@echo "Done Checking $(FILE_PTKEY_FILENAME)"
+
+pubkey : $(FILE_PUBKEY_FILENAME)
+	@echo "Done Checking $(FILE_PUBKEY_FILENAME)"
+
+ptpubkey : $(FILE_PTPUBKEY_FILENAME)
+	@echo "Done Checking $(FILE_PTPUBKEY_FILENAME)"
+
+
+clean: 
+	rm $(FILE_OPENSSLCONF_FILENAME) $(FILE_CSR_FILENAME) 
+
+realclean: clean
+	rm $(FILE_KEY_FILENAME)
+  
+  
